@@ -10,7 +10,7 @@ import os
 
 # --- CONFIGURAÇÃO ---
 favicon_path = "logo_pdf.png" if os.path.exists("logo_pdf.png") else "📱"
-st.set_page_config(page_title="SNIPER WHATSAPP V3", page_icon=favicon_path, layout="wide")
+st.set_page_config(page_title="SNIPER WHATSAPP V4", page_icon=favicon_path, layout="wide")
 
 # --- CORES ---
 COLOR_GREEN = "#25D366"  # Verde WhatsApp
@@ -37,7 +37,7 @@ with c1:
     if os.path.exists("logo_app.png"): st.image("logo_app.png", width=150)
     else: st.markdown(f"# 📱", unsafe_allow_html=True)
 with c2:
-    st.markdown(f"<h1 style='margin-top: 15px; margin-bottom: 0px;'>SNIPER WHATSAPP V3</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='margin-top: 15px; margin-bottom: 0px;'>SNIPER WHATSAPP V4</h1>", unsafe_allow_html=True)
     st.markdown(f"<h3 style='margin-top: 0px; color: {COLOR_TEXT} !important;'>COTAS DE CONSÓRCIOS EXTRAÍDAS DE GRUPOS</h3>", unsafe_allow_html=True)
 st.markdown(f"<hr style='border: 1px solid {COLOR_GREEN}; margin-top: 0;'>", unsafe_allow_html=True)
 
@@ -143,6 +143,7 @@ def extrair_cotas_whatsapp(mensagens, tipo_selecionado):
                     'Entrada': 0.0,
                     'Parcela': 0.0,
                     'Saldo': 0.0,
+                    'Prazo_ind': 0, # Adiciona o Prazo Individual
                     'Vendedor': autor,
                     'Origem': origem # Rastreio do arquivo
                 }
@@ -172,14 +173,20 @@ def extrair_cotas_whatsapp(mensagens, tipo_selecionado):
 
     for c in lista_cotas:
         if c['Crédito'] > 5000:
-            # AJUSTE PRAZO: Estima Saldo com 120% de custo total (para evitar termos muito longos como 383 meses)
+            # Estima Saldo
             if c['Saldo'] == 0: 
                 custo_total_estimado = (c['Crédito'] * 1.20)
                 c['Saldo'] = custo_total_estimado - c['Entrada']
-                # Se a estimativa for muito ruim, usa um valor padrão (70% do crédito)
                 if c['Saldo'] <= 0 or c['Saldo'] > (c['Crédito'] * 1.5):
                     c['Saldo'] = c['Crédito'] * 0.7 
             
+            # NOVO: Cálculo do Prazo Individual (Saldo / Parcela)
+            c['Prazo_ind'] = 0
+            if c['Parcela'] > 0 and c['Saldo'] > 0:
+                c['Prazo_ind'] = int(c['Saldo'] / c['Parcela'])
+                if c['Prazo_ind'] > 300: c['Prazo_ind'] = 300 # Teto
+                if c['Prazo_ind'] < 10: c['Prazo_ind'] = 10 # Piso
+
             c['CustoTotal'] = c['Entrada'] + c['Saldo']
             c['EntradaPct'] = (c['Entrada']/c['Crédito']) if c['Crédito'] else 0
 
@@ -229,19 +236,15 @@ def processar_combinacoes(cotas, min_cred, max_cred, max_ent, max_parc, max_cust
                     soma_saldo = sum(c['Saldo'] for c in combo)
                     custo_total_exibicao = soma_ent + soma_saldo
                     
-                    # PRAZO CORRETO: Total Saldo / Total Parcelas
-                    prazo_medio = 0
-                    if soma_parc > 0: 
-                        prazo_medio = int(soma_saldo / soma_parc)
-                        if prazo_medio > 400: prazo_medio = 400 # Teto de meses
-                        if prazo_medio < 10: prazo_medio = 10 # Piso de meses
+                    # NOVO: Prazo da Combinação é o MAIOR prazo individual
+                    max_prazo = max(c['Prazo_ind'] for c in combo) 
+                    prazo_final = max_prazo
 
                     custo_real = (custo_total_exibicao / soma_cred) - 1
                     if custo_real > max_custo: continue
                     
                     # AJUSTE STATUS: Inclui a porcentagem real
                     custo_efetivo_pct = custo_real * 100
-                    
                     status = f"⚠️ PADRÃO ({custo_efetivo_pct:.1f}%)"
                     if custo_real <= 0.20: status = f"💎 OURO ({custo_efetivo_pct:.1f}%)"
                     elif custo_real <= 0.30: status = f"🔥 IMPERDÍVEL ({custo_efetivo_pct:.1f}%)"
@@ -254,13 +257,18 @@ def processar_combinacoes(cotas, min_cred, max_cred, max_ent, max_parc, max_cust
                         nome_limpo = re.sub(r'\s*\d{2}_\d{2}_\d{2,4}$', '', nome_limpo)
                         return nome_limpo
                         
+                    # AJUSTE DETALHES: Inclui Crédito, Prazo e Parcela individual de cada cota
+                    detalhes = " || ".join([
+                        f"[ID {c['ID']}] Cr: R${c['Crédito']:,.0f} / Pr: {c['Prazo_ind']} / Pa: R${c['Parcela']:,.0f}" 
+                        for c in combo
+                    ])
+                    
                     ids = " + ".join([str(c['ID']) for c in combo])
                     vendedores = list(set([c['Vendedor'] for c in combo]))
                     vendedor_str = ", ".join(vendedores)
                     origens = list(set([limpar_origem(c['Origem']) for c in combo]))
                     origem_str = ", ".join(origens)
                     
-                    detalhes = " || ".join([f"[ID {c['ID']}] R${c['Crédito']:,.0f}" for c in combo])
                     tipo_final = combo[0]['Tipo']
                     entrada_pct = (soma_ent / soma_cred)
                     
@@ -276,9 +284,9 @@ def processar_combinacoes(cotas, min_cred, max_cred, max_ent, max_parc, max_cust
                         'ENTRADA %': entrada_pct * 100,
                         'SALDO DEVEDOR': soma_saldo,
                         'CUSTO TOTAL': custo_total_exibicao,
-                        'PRAZO': prazo_medio,
+                        'PRAZO': prazo_final, # Usando o prazo máximo
                         'PARCELAS': soma_parc,
-                        'CUSTO EFETIVO %': custo_efetivo_pct, # Já está em %
+                        'CUSTO EFETIVO %': custo_efetivo_pct,
                         'DETALHES': detalhes
                     })
                     if len([x for x in combinacoes_validas if x['ADMINISTRADORA'] == admin]) > 300: break
@@ -312,7 +320,7 @@ def gerar_pdf_final(df):
     
     # Headers - Adicionado ORIGEM
     headers = ["STS", "ORIGEM", "ADM", "CONTATO", "CREDITO", "ENTRADA", "ENT%", "SALDO", "TOTAL PAGO", "PRZ", "PARCELA", "EFET%", "DETALHES"]
-    w = [22, 20, 15, 30, 20, 20, 8, 20, 20, 8, 15, 8, 70] 
+    w = [25, 18, 15, 28, 20, 20, 8, 20, 20, 8, 15, 8, 65] # Largura DETALHES ligeiramente menor
     
     for i, h in enumerate(headers): pdf.cell(w[i], 8, h, 1, 0, 'C', True)
     pdf.ln()
@@ -339,7 +347,7 @@ def gerar_pdf_final(df):
         pdf.cell(w[10], 8, f"R$ {row['PARCELAS']:,.0f}", 1, 0, 'R')
         pdf.cell(w[11], 8, f"{row['CUSTO EFETIVO %']:.0f}%", 1, 0, 'C')
         detalhe = limpar_emojis(row['DETALHES'])
-        pdf.cell(w[12], 8, detalhe[:65], 1, 1, 'L')
+        pdf.cell(w[12], 8, detalhe[:60], 1, 1, 'L') # Limite de 60 caracteres
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 # --- APP ---
@@ -422,7 +430,7 @@ if st.session_state.df_resultado is not None:
         c_pdf, c_xls = st.columns(2)
         try:
             pdf_bytes = gerar_pdf_final(df_show)
-            c_pdf.download_button("📄 Baixar PDF (Formatado)", pdf_bytes, "Relatorio_Sniper_WPP_V3.pdf", "application/pdf")
+            c_pdf.download_button("📄 Baixar PDF (Formatado)", pdf_bytes, "Relatorio_Sniper_WPP_V4.pdf", "application/pdf")
         except Exception as e: c_pdf.error(f"Erro PDF: {e}")
 
         buf = BytesIO()
@@ -457,8 +465,8 @@ if st.session_state.df_resultado is not None:
             ws.set_column('A:A', 28) # Status largo (para caber a porcentagem)
             ws.set_column('B:B', 20) # Origem
             ws.set_column('D:D', 30) # Contato
-            ws.set_column('O:O', 60) # Detalhes
+            ws.set_column('O:O', 80) # Detalhes (Mais largo para caber a descrição completa)
             
-        c_xls.download_button("📊 Baixar Excel (Formatado)", buf.getvalue(), "Calculo_Sniper_WPP_V3.xlsx")
+        c_xls.download_button("📊 Baixar Excel (Formatado)", buf.getvalue(), "Calculo_Sniper_WPP_V4.xlsx")
     else:
         st.warning("Nenhuma oportunidade com estes filtros.")

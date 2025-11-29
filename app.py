@@ -10,7 +10,7 @@ import os
 
 # --- CONFIGURAÇÃO ---
 favicon_path = "logo_pdf.png" if os.path.exists("logo_pdf.png") else "📱"
-st.set_page_config(page_title="SNIPER WHATSAPP", page_icon=favicon_path, layout="wide")
+st.set_page_config(page_title="SNIPER WHATSAPP V3", page_icon=favicon_path, layout="wide")
 
 # --- CORES ---
 COLOR_GREEN = "#25D366"  # Verde WhatsApp
@@ -37,7 +37,7 @@ with c1:
     if os.path.exists("logo_app.png"): st.image("logo_app.png", width=150)
     else: st.markdown(f"# 📱", unsafe_allow_html=True)
 with c2:
-    st.markdown(f"<h1 style='margin-top: 15px; margin-bottom: 0px;'>SNIPER WHATSAPP</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 style='margin-top: 15px; margin-bottom: 0px;'>SNIPER WHATSAPP V3</h1>", unsafe_allow_html=True)
     st.markdown(f"<h3 style='margin-top: 0px; color: {COLOR_TEXT} !important;'>COTAS DE CONSÓRCIOS EXTRAÍDAS DE GRUPOS</h3>", unsafe_allow_html=True)
 st.markdown(f"<hr style='border: 1px solid {COLOR_GREEN}; margin-top: 0;'>", unsafe_allow_html=True)
 
@@ -130,6 +130,7 @@ def extrair_cotas_whatsapp(mensagens, tipo_selecionado):
             
             if match_admin:
                 if cota_atual and cota_atual.get('Crédito', 0) > 0:
+                     # Adiciona a cota anterior antes de começar a nova
                      if cota_atual.get('Entrada', 0) == 0: cota_atual['Entrada'] = cota_atual['Crédito'] * 0.3
                      lista_cotas.append(cota_atual)
                      id_counter += 1
@@ -171,7 +172,14 @@ def extrair_cotas_whatsapp(mensagens, tipo_selecionado):
 
     for c in lista_cotas:
         if c['Crédito'] > 5000:
-            if c['Saldo'] == 0: c['Saldo'] = (c['Crédito'] * 1.3) - c['Entrada']
+            # AJUSTE PRAZO: Estima Saldo com 120% de custo total (para evitar termos muito longos como 383 meses)
+            if c['Saldo'] == 0: 
+                custo_total_estimado = (c['Crédito'] * 1.20)
+                c['Saldo'] = custo_total_estimado - c['Entrada']
+                # Se a estimativa for muito ruim, usa um valor padrão (70% do crédito)
+                if c['Saldo'] <= 0 or c['Saldo'] > (c['Crédito'] * 1.5):
+                    c['Saldo'] = c['Crédito'] * 0.7 
+            
             c['CustoTotal'] = c['Entrada'] + c['Saldo']
             c['EntradaPct'] = (c['Entrada']/c['Crédito']) if c['Crédito'] else 0
 
@@ -221,28 +229,39 @@ def processar_combinacoes(cotas, min_cred, max_cred, max_ent, max_parc, max_cust
                     soma_saldo = sum(c['Saldo'] for c in combo)
                     custo_total_exibicao = soma_ent + soma_saldo
                     
+                    # PRAZO CORRETO: Total Saldo / Total Parcelas
                     prazo_medio = 0
-                    if soma_parc > 0: prazo_medio = int(soma_saldo / soma_parc)
+                    if soma_parc > 0: 
+                        prazo_medio = int(soma_saldo / soma_parc)
+                        if prazo_medio > 400: prazo_medio = 400 # Teto de meses
+                        if prazo_medio < 10: prazo_medio = 10 # Piso de meses
 
                     custo_real = (custo_total_exibicao / soma_cred) - 1
                     if custo_real > max_custo: continue
                     
-                    # Dados Compostos
+                    # AJUSTE STATUS: Inclui a porcentagem real
+                    custo_efetivo_pct = custo_real * 100
+                    
+                    status = f"⚠️ PADRÃO ({custo_efetivo_pct:.1f}%)"
+                    if custo_real <= 0.20: status = f"💎 OURO ({custo_efetivo_pct:.1f}%)"
+                    elif custo_real <= 0.30: status = f"🔥 IMPERDÍVEL ({custo_efetivo_pct:.1f}%)"
+                    elif custo_real <= 0.45: status = f"✨ EXCELENTE ({custo_efetivo_pct:.1f}%)"
+                    elif custo_real <= 0.55: status = f"✅ OPORTUNIDADE ({custo_efetivo_pct:.1f}%)"
+                    
+                    # AJUSTE ORIGEM: Limpeza do nome do grupo
+                    def limpar_origem(nome_arquivo):
+                        nome_limpo = nome_arquivo.replace('.txt','').replace('_chat','').replace('WhatsApp Chat - ','').strip()
+                        nome_limpo = re.sub(r'\s*\d{2}_\d{2}_\d{2,4}$', '', nome_limpo)
+                        return nome_limpo
+                        
                     ids = " + ".join([str(c['ID']) for c in combo])
                     vendedores = list(set([c['Vendedor'] for c in combo]))
                     vendedor_str = ", ".join(vendedores)
-                    origens = list(set([c['Origem'].replace('.txt','').replace('_chat','') for c in combo]))
+                    origens = list(set([limpar_origem(c['Origem']) for c in combo]))
                     origem_str = ", ".join(origens)
                     
                     detalhes = " || ".join([f"[ID {c['ID']}] R${c['Crédito']:,.0f}" for c in combo])
                     tipo_final = combo[0]['Tipo']
-                    
-                    status = "⚠️ PADRÃO"
-                    if custo_real <= 0.20: status = "💎 OURO (<20%)"
-                    elif custo_real <= 0.30: status = "🔥 IMPERDÍVEL (20-30%)"
-                    elif custo_real <= 0.45: status = "✨ EXCELENTE (30-45%)"
-                    elif custo_real <= 0.55: status = "✅ OPORTUNIDADE (45-55%)"
-                    
                     entrada_pct = (soma_ent / soma_cred)
                     
                     combinacoes_validas.append({
@@ -259,7 +278,7 @@ def processar_combinacoes(cotas, min_cred, max_cred, max_ent, max_parc, max_cust
                         'CUSTO TOTAL': custo_total_exibicao,
                         'PRAZO': prazo_medio,
                         'PARCELAS': soma_parc,
-                        'CUSTO EFETIVO %': custo_real * 100,
+                        'CUSTO EFETIVO %': custo_efetivo_pct, # Já está em %
                         'DETALHES': detalhes
                     })
                     if len([x for x in combinacoes_validas if x['ADMINISTRADORA'] == admin]) > 300: break
@@ -403,8 +422,8 @@ if st.session_state.df_resultado is not None:
         c_pdf, c_xls = st.columns(2)
         try:
             pdf_bytes = gerar_pdf_final(df_show)
-            c_pdf.download_button("📄 Baixar PDF (Formatado)", pdf_bytes, "Relatorio_Sniper_WPP.pdf", "application/pdf")
-        except: c_pdf.error("Erro PDF")
+            c_pdf.download_button("📄 Baixar PDF (Formatado)", pdf_bytes, "Relatorio_Sniper_WPP_V3.pdf", "application/pdf")
+        except Exception as e: c_pdf.error(f"Erro PDF: {e}")
 
         buf = BytesIO()
         with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
@@ -435,11 +454,11 @@ if st.session_state.df_resultado is not None:
             ws.set_column('M:M', 18, fmt_money) # Parcela
             ws.set_column('N:N', 10, fmt_perc)  # Efetivo %
             
-            ws.set_column('A:A', 25) # Status largo
+            ws.set_column('A:A', 28) # Status largo (para caber a porcentagem)
             ws.set_column('B:B', 20) # Origem
             ws.set_column('D:D', 30) # Contato
             ws.set_column('O:O', 60) # Detalhes
             
-        c_xls.download_button("📊 Baixar Excel (Formatado)", buf.getvalue(), "Calculo_Sniper_WPP.xlsx")
+        c_xls.download_button("📊 Baixar Excel (Formatado)", buf.getvalue(), "Calculo_Sniper_WPP_V3.xlsx")
     else:
         st.warning("Nenhuma oportunidade com estes filtros.")

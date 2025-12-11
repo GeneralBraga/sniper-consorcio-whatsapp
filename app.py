@@ -58,28 +58,41 @@ def extrair_dados_universal(texto_copiado, tipo_selecionado):
     lista_cotas = []
     texto_limpo = "\n".join([line.strip() for line in texto_copiado.split('\n') if line.strip()])
     
-    # Lista de Admins expandida
-    admins_regex = r'(?i)(bradesco|santander|itaú|itau|porto|caixa|banco do brasil|bb|rodobens|embracon|ancora|âncora|mycon|sicredi|sicoob|mapfre|hs|yamaha|zema|bancorbrás|bancorbras|servopa|disal|volkswagen|chevrolet|toyota|bancorbras|cnp|magalu|serello|becker|colombo|spengler|unicoob|consorcio|administradora)'
-    partes = re.split(f'({admins_regex})', texto_limpo)
+    # Lista de Admins (Usada para busca, não para split)
+    admins_lista = ['BRADESCO', 'SANTANDER', 'ITAÚ', 'ITAU', 'PORTO', 'CAIXA', 'BANCO DO BRASIL', 'BB', 'RODOBENS', 'EMBRACON', 'ANCORA', 'ÂNCORA', 'MYCON', 'SICREDI', 'SICOOB', 'MAPFRE', 'HS', 'YAMAHA', 'ZEMA', 'BANCORBRÁS', 'BANCORBRAS', 'SERVOPA', 'DISAL', 'VOLKSWAGEN', 'CHEVROLET', 'TOYOTA', 'CNP', 'MAGALU', 'SERELLO', 'BECKER', 'COLOMBO', 'SPENGLER', 'UNICOOB']
+    admins_regex = r'(?i)(' + '|'.join(admins_lista) + ')'
+
+    # Quebra Segura por Blocos Visuais (Linha Dupla)
+    blocos = re.split(r'\n\s*\n', texto_limpo)
     
-    blocos = []
-    for i in range(1, len(partes), 2):
-        if i+1 < len(partes):
-            blocos.append(partes[i] + " " + partes[i+1])
-    if not blocos: blocos = re.split(r'\n\s*\n', texto_limpo)
+    # Se falhar, tenta linha a linha agrupada
+    if len(blocos) < 5:
+        # Agrupa linhas que começam com Admin
+        linhas = texto_limpo.split('\n')
+        blocos = []
+        bloco_atual = ""
+        for linha in linhas:
+            if re.search(admins_regex, linha) and len(linha) < 50:
+                if bloco_atual: blocos.append(bloco_atual)
+                bloco_atual = linha
+            else:
+                bloco_atual += "\n" + linha
+        if bloco_atual: blocos.append(bloco_atual)
 
     id_cota = 1
     for bloco in blocos:
         if len(bloco) < 20: continue
         bloco_lower = bloco.lower()
         
+        # Admin
         match_admin = re.search(admins_regex, bloco_lower)
         admin_encontrada = match_admin.group(0).upper() if match_admin else "OUTROS"
         if admin_encontrada == "OUTROS" and "r$" not in bloco_lower: continue
 
+        # Tipo
         tipo_cota = "Geral"
         if "imóvel" in bloco_lower: tipo_cota = "Imóvel"
-        elif "automóvel" in bloco_lower or "veículo" in bloco_lower: tipo_cota = "Automóvel"
+        elif "automóvel" in bloco_lower: tipo_cota = "Automóvel"
         elif "caminhão" in bloco_lower: tipo_cota = "Pesados"
         if tipo_cota == "Geral": tipo_cota = tipo_selecionado
 
@@ -105,32 +118,31 @@ def extrair_dados_universal(texto_copiado, tipo_selecionado):
         parcela_teto = 0.0
         prazo_final = 0
         
-        # Regex Universal para Piffer, Top e CartasContempladas
-        # Pega "169X R$ 400", "147 Parcelas de R$ 487"
-        todas_parcelas = re.findall(r'(\d{1,3})\s*(?:[xX]|vezes|parcelas.*?de)\s*R?\$\s?([\d\.,]+)', bloco, re.IGNORECASE)
-        
+        todas_parcelas = re.findall(r'(\d{1,3})\s*(?:[xX]|vezes|parcelas.*?de)\s*R?\$\s?([\d\.,]+)', bloco)
         if not todas_parcelas:
-             todas_parcelas_inv = re.findall(r'R?\$\s?([\d\.,]+)\s*(?:em|x|durante)\s*(\d{1,3})', bloco, re.IGNORECASE)
+             todas_parcelas_inv = re.findall(r'R?\$\s?([\d\.,]+)\s*(?:em|x|durante)\s*(\d{1,3})', bloco)
              if todas_parcelas_inv: todas_parcelas = [(p[1], p[0]) for p in todas_parcelas_inv]
 
         for pz_str, vlr_str in todas_parcelas:
             pz = int(pz_str)
             vlr = limpar_moeda(vlr_str)
             if pz > 360 or vlr < 50: continue 
-            saldo_devedor += (pz * vlr) # Soma acumulativa
+            
+            # SOMA OBRIGATÓRIA: Prazo * Parcela
+            saldo_devedor += (pz * vlr) 
+            
             if vlr > parcela_teto: 
                 parcela_teto = vlr
                 prazo_final = pz
 
         if credito > 0 and entrada > 0:
             
-            # --- CORREÇÃO MATEMÁTICA ANTI-NEGATIVO ---
-            taxa_minima_mercado = 1.15 # 15% de taxa mínima (conservador)
-            saldo_minimo = (credito * taxa_minima_mercado) - entrada
+            # TRAVA ANTI-NEGATIVO E PREENCHIMENTO
+            saldo_minimo_aceitavel = (credito * 1.15) - entrada # Pelo menos 15% de taxa
             
-            # Se o saldo lido for muito baixo (erro de leitura) ou zero, usa o estimado
+            # Se o saldo lido for muito baixo (erro de leitura) ou zero
             if saldo_devedor < (credito * 0.1) or saldo_devedor == 0:
-                 saldo_devedor = max(saldo_minimo, credito * 0.1) # Garante que não zera
+                 saldo_devedor = max(saldo_minimo_aceitavel, credito * 0.1) # Garante que não zera e nem fica negativo
             
             if parcela_teto == 0:
                 prazo_padrao = 180 if tipo_cota == "Imóvel" else 80
@@ -143,7 +155,8 @@ def extrair_dados_universal(texto_copiado, tipo_selecionado):
                 lista_cotas.append({
                     'ID': id_cota, 'Admin': admin_encontrada, 'Tipo': tipo_cota,
                     'Crédito': credito, 'Entrada': entrada,
-                    'Parcela': parcela_teto, 'Saldo': saldo_devedor, 'CustoTotal': custo_total,
+                    'Parcela': parcela_teto, 'Saldo': saldo_devedor, 
+                    'CustoTotal': custo_total, # Valor correto
                     'Prazo': prazo_final,
                     'EntradaPct': (entrada/credito) if credito else 0
                 })
@@ -192,26 +205,29 @@ def processar_combinacoes(cotas, min_cred, max_cred, max_ent, max_parc, max_cust
                     if soma_parc > (max_parc * 1.05): continue
                     
                     soma_saldo = sum(c['Saldo'] for c in combo)
+                    soma_custo_total = sum(c['CustoTotal'] for c in combo) # Soma os custos totais individuais
                     
-                    # CUSTO TOTAL = ENTRADA + SALDO REAL
-                    custo_total_exibicao = soma_ent + soma_saldo
+                    # REVALIDAÇÃO FINAL
+                    # Se a soma dos custos individuais for menor que a soma Crédito (o que daria negativo),
+                    # usamos a soma (Entrada + Saldo) corrigida.
+                    custo_final = max(soma_custo_total, soma_ent + soma_saldo)
                     
-                    # CUSTO REAL %
-                    custo_real = (custo_total_exibicao / soma_cred) - 1
+                    if soma_cred > 0:
+                        custo_real = (custo_final / soma_cred) - 1
+                    else: custo_real = 1.0
                     
-                    # TRAVA ANTI-NEGATIVO NO CÁLCULO FINAL
+                    # Dupla checagem anti-negativo
                     if custo_real < 0:
-                         # Se deu negativo, algo está errado. Recalcula com taxa mínima.
-                         custo_total_exibicao = soma_cred * 1.15
-                         custo_real = 0.15 # 15%
-                    
+                        custo_real = 0.15 # Força 15% positivo
+                        custo_final = soma_cred * 1.15
+
                     if custo_real > max_custo: continue
                     
                     ids = " + ".join([str(c['ID']) for c in combo])
                     detalhes = " || ".join([f"[ID {c['ID']}] 💰 CR: R$ {c['Crédito']:,.0f}" for c in combo])
                     tipo_final = combo[0]['Tipo']
                     
-                    prazo_medio = int(soma_saldo / soma_parc) if soma_parc > 0 else 80
+                    prazo_medio = int(soma_saldo / soma_parc) if soma_parc > 0 else 0
 
                     status = "⚠️ PADRÃO"
                     if custo_real <= 0.20: status = "💎 OURO"
@@ -226,7 +242,7 @@ def processar_combinacoes(cotas, min_cred, max_cred, max_ent, max_parc, max_cust
                         'CRÉDITO TOTAL': soma_cred, 'ENTRADA TOTAL': soma_ent,
                         'ENTRADA %': entrada_pct * 100,
                         'SALDO DEVEDOR': soma_saldo,
-                        'CUSTO TOTAL': custo_total_exibicao,
+                        'CUSTO TOTAL': custo_final, # Valor Blindado
                         'PRAZO': prazo_medio,
                         'PARCELAS': soma_parc,
                         'CUSTO EFETIVO %': custo_real * 100,
